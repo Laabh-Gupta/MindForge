@@ -3,6 +3,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from supabase import create_client
 
@@ -16,6 +17,16 @@ load_dotenv(BASE_DIR / ".env")
 
 
 app = FastAPI()
+
+
+# CORS — allow the Vite dev server to call this API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # Supabase client

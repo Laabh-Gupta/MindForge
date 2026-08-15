@@ -1,3 +1,24 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #14201A;
+  --color-bg-elevated: #1C2B22;
+  --color-bg-card: #1A2921;
+  --color-text: #EDEDE3;
+  --color-text-muted: #8FA091;
+  --color-accent: #C9A227;
+  --color-accent-dim: #8A7020;
+  --color-user-bubble: #2A3B2F;
+  --color-border: #2C3B31;
+
+  --font-display: 'Fraunces', serif;
+  --font-body: 'Manrope', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
