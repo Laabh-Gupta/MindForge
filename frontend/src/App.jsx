@@ -3,6 +3,9 @@ import { supabase } from './lib/supabase'
 import Login from './Login'
 import Debate from './Debate'
 
+const { data } = await supabase.auth.getSession()
+console.log("ACCESS TOKEN:", data.session?.access_token)
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false)
 

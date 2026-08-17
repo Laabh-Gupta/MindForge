@@ -9,6 +9,7 @@ from supabase import create_client
 
 from app.auth import get_current_user
 from app.routers.sessions import router as sessions_router
+from app.routers.evaluations import router as evaluations_router
 
 
 # Load backend/.env explicitly
@@ -16,6 +17,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 
+# Create FastAPI application
 app = FastAPI()
 
 
@@ -44,11 +46,18 @@ gemini_client = genai.Client(
 
 # Register routers
 app.include_router(sessions_router)
+app.include_router(evaluations_router)
 
 
 @app.get("/health")
 def health():
-    result = supabase.table("sessions").select("id").limit(1).execute()
+    result = (
+        supabase
+        .table("sessions")
+        .select("id")
+        .limit(1)
+        .execute()
+    )
 
     return {
         "status": "ok",

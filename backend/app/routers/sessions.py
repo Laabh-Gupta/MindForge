@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from datetime import datetime, timezone
+
 from app.auth import get_current_user
 from app.db import supabase
+from app.services.personalization import get_training_context
+
 from google import genai
 import os
 
@@ -25,6 +29,30 @@ a new question — explain it differently, do not repeat it verbatim.
 Never inject unrelated facts, statistics, or generic filler. Stay strictly on the
 user's actual topic. Never add extra sections beyond these three."""
 
+INTERVIEW_SYSTEM_PROMPT = """You are conducting a professional interview. Your job is to
+genuinely assess the candidate's thinking, not run through a script.
+
+For every candidate answer:
+1. Understand what they actually said — their reasoning, not just the topic.
+2. Identify anything vague, inconsistent, or under-explained.
+3. Ask exactly ONE natural follow-up question that either:
+   - digs deeper into their specific answer, or
+   - challenges an inconsistency you noticed, or
+   - asks them to clarify something vague.
+
+Never ask a random unrelated question from a generic bank. Every question must connect
+to what the candidate just said. Stay professional and direct — like a real interviewer,
+not overly friendly or overly harsh.
+
+Do not evaluate or score the candidate out loud during the interview — that happens
+separately, afterward."""
+
+
+def get_system_prompt(mode: str) -> str:
+    if mode == "interview":
+        return INTERVIEW_SYSTEM_PROMPT
+    return DEBATE_SYSTEM_PROMPT
+
 class CreateSessionRequest(BaseModel):
     mode: str
     topic: str
@@ -44,17 +72,63 @@ def create_session(req: CreateSessionRequest, user_id: str = Depends(get_current
     return result.data[0]
 
 @router.post("/sessions/{session_id}/messages")
-def send_message(session_id: str, req: MessageRequest, user_id: str = Depends(get_current_user)):
-    # 1. Load session (RLS + explicit user_id check both apply)
-    session = supabase.table("sessions").select("*").eq("id", session_id).eq("user_id", user_id).single().execute().data
+def send_message(
+    session_id: str,
+    req: MessageRequest,
+    user_id: str = Depends(get_current_user)
+):
+    # 1. Load the session belonging to the authenticated user
+    session = (
+        supabase
+        .table("sessions")
+        .select("*")
+        .eq("id", session_id)
+        .eq("user_id", user_id)
+        .single()
+        .execute()
+        .data
+    )
 
-    # 2. Save the user's message
+    # 2. Stop if the session has already concluded
+    if session["concluded_at"] is not None:
+        return {
+            "error": "Session has already concluded.",
+            "concluded": True
+        }
+
+    # 3. Stop if the maximum number of turns has already been reached
+    if session["turn_count"] >= session["max_turns"]:
+        supabase.table("sessions").update({
+            "status": "completed",
+            "concluded_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", session_id).execute()
+
+        return {
+            "error": "Maximum number of turns reached.",
+            "concluded": True
+        }
+
+    # 4. Get personalized training context
+    training_context = get_training_context(user_id)
+
+    mode_prompt = get_system_prompt(session["mode"])
+
+    full_prompt = (
+        f"{training_context}\n\n{mode_prompt}"
+        if training_context
+        else mode_prompt
+    )
+
+    # 5. Save user's message
     supabase.table("messages").insert({
-        "session_id": session_id, "role": "user", "content": req.content
+        "session_id": session_id,
+        "role": "user",
+        "content": req.content
     }).execute()
 
-    # 3. Call Gemini — continue the thread if one exists, else start fresh with the system prompt
+    # 6. Continue Gemini conversation if one exists
     prev_id = session["config"].get("last_interaction_id")
+
     if prev_id:
         interaction = gemini_client.interactions.create(
             model="gemini-3.6-flash",
@@ -64,19 +138,48 @@ def send_message(session_id: str, req: MessageRequest, user_id: str = Depends(ge
     else:
         interaction = gemini_client.interactions.create(
             model="gemini-3.6-flash",
-            input=f"{DEBATE_SYSTEM_PROMPT}\n\nTopic: {session['topic']}\n\nUser: {req.content}"
+            input=(
+                f"{full_prompt}\n\n"
+                f"Topic: {session['topic']}\n\n"
+                f"User: {req.content}"
+            )
         )
 
     ai_reply = interaction.output_text
 
-    # 4. Save the AI's reply
+    # 7. Save AI reply
     supabase.table("messages").insert({
-        "session_id": session_id, "role": "ai", "content": ai_reply
+        "session_id": session_id,
+        "role": "ai",
+        "content": ai_reply
     }).execute()
 
-    # 5. Remember the interaction thread for next turn
-    supabase.table("sessions").update({
-        "config": {**session["config"], "last_interaction_id": interaction.id}
-    }).eq("id", session_id).execute()
+    # 8. Increment turn count
+    new_turn_count = session["turn_count"] + 1
 
-    return {"reply": ai_reply}
+    # 9. Conclude session if maximum turns reached
+    concluded = new_turn_count >= session["max_turns"]
+
+    update_data = {
+        "turn_count": new_turn_count,
+        "config": {
+            **session["config"],
+            "last_interaction_id": interaction.id
+        }
+    }
+
+    if concluded:
+        update_data["status"] = "completed"
+        update_data["concluded_at"] = datetime.now(timezone.utc).isoformat()
+
+    # 10. Update session
+    supabase.table("sessions").update(
+        update_data
+    ).eq("id", session_id).execute()
+
+    return {
+        "reply": ai_reply,
+        "turn_count": new_turn_count,
+        "max_turns": session["max_turns"],
+        "concluded": concluded
+    }
