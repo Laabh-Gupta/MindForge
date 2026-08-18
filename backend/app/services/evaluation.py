@@ -1,12 +1,20 @@
 from app.db import supabase
-from google import genai
+# from google import genai
 import os
 import json
 
 
-gemini_client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
+# gemini_client = genai.Client(
+#     api_key=os.getenv("GEMINI_API_KEY")
+# )
+
+from groq import Groq
+
+groq_client = Groq(
+    api_key=os.getenv("GROQ_API_KEY")
 )
+
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 
 from app.services.rubrics import get_categories, get_mode_label
@@ -90,17 +98,25 @@ def evaluate_session(session_id: str, user_id: str):
     # 4. Ask Gemini to evaluate the session
     evaluation_prompt = build_evaluation_prompt(session["mode"])
 
-    interaction = gemini_client.interactions.create(
-        model="gemini-3.6-flash",
-        input=(
-            f"{evaluation_prompt}\n\n"
-            f"Topic: {session['topic']}\n\n"
-            f"Conversation:\n{conversation}"
-        )
+    response = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": evaluation_prompt
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Topic: {session['topic']}\n\n"
+                    f"Conversation:\n{conversation}"
+                )
+            }
+        ],
+        temperature=0.2,
     )
 
-    # 5. Parse Gemini's JSON response
-    raw_output = interaction.output_text.strip()
+    raw_output = response.choices[0].message.content.strip()
 
     # Gemini may wrap valid JSON in Markdown code fences.
     if raw_output.startswith("```"):
@@ -120,7 +136,7 @@ def evaluate_session(session_id: str, user_id: str):
         evaluation = json.loads(raw_output)
     except json.JSONDecodeError:
         raise ValueError(
-            f"Gemini returned invalid evaluation JSON: {raw_output}"
+            f"Groq returned invalid evaluation JSON: {raw_output}"
         )
 
     return evaluation

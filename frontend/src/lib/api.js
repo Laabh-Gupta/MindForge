@@ -31,3 +31,11 @@ export async function evaluateSession(sessionId) {
   })
   return res.json()
 }
+
+export async function getSessionHistory() {
+  const res = await fetch(`${API_BASE}/sessions/history`, {
+    headers: { ...(await authHeader()) },
+  })
+
+  return res.json()
+}

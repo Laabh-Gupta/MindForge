@@ -6,11 +6,19 @@ from app.auth import get_current_user
 from app.db import supabase
 from app.services.personalization import get_training_context
 
-from google import genai
+# from google import genai
+# import os
+
+# router = APIRouter()
+# gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+from groq import Groq
 import os
 
 router = APIRouter()
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 DEBATE_SYSTEM_PROMPT = """You are a Socratic debate coach. Your job is NOT to simply
 argue with the user or agree with them.
@@ -126,26 +134,42 @@ def send_message(
         "content": req.content
     }).execute()
 
-    # 6. Continue Gemini conversation if one exists
-    prev_id = session["config"].get("last_interaction_id")
+    # 6. Build conversation history for Groq
+    history = (
+        supabase
+        .table("messages")
+        .select("role, content")
+        .eq("session_id", session_id)
+        .order("created_at")
+        .execute()
+        .data
+    )
 
-    if prev_id:
-        interaction = gemini_client.interactions.create(
-            model="gemini-3.6-flash",
-            input=req.content,
-            previous_interaction_id=prev_id
-        )
-    else:
-        interaction = gemini_client.interactions.create(
-            model="gemini-3.6-flash",
-            input=(
+    groq_messages = [
+        {
+            "role": "system",
+            "content": (
                 f"{full_prompt}\n\n"
-                f"Topic: {session['topic']}\n\n"
-                f"User: {req.content}"
+                f"Topic: {session['topic']}"
             )
-        )
+        }
+    ]
 
-    ai_reply = interaction.output_text
+    for message in history:
+        groq_role = "assistant" if message["role"] == "ai" else "user"
+
+        groq_messages.append({
+            "role": groq_role,
+            "content": message["content"]
+        })
+
+    response = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=groq_messages,
+        temperature=0.7,
+    )
+
+    ai_reply = response.choices[0].message.content
 
     # 7. Save AI reply
     supabase.table("messages").insert({
@@ -163,8 +187,7 @@ def send_message(
     update_data = {
         "turn_count": new_turn_count,
         "config": {
-            **session["config"],
-            "last_interaction_id": interaction.id
+            **session["config"]
         }
     }
 
@@ -183,3 +206,22 @@ def send_message(
         "max_turns": session["max_turns"],
         "concluded": concluded
     }
+
+@router.get("/sessions/history")
+def get_session_history(
+    user_id: str = Depends(get_current_user)
+):
+    result = (
+        supabase
+        .table("sessions")
+        .select(
+            "id, mode, topic, status, created_at, "
+            "session_evaluations(overall_score)"
+        )
+        .eq("user_id", user_id)
+        .eq("status", "completed")
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    return result.data
