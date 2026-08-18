@@ -24,3 +24,10 @@ export async function sendMessage(sessionId, content) {
   })
   return res.json()
 }
+export async function evaluateSession(sessionId) {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/evaluate`, {
+    method: 'POST',
+    headers: { ...(await authHeader()) },
+  })
+  return res.json()
+}

@@ -9,54 +9,45 @@ gemini_client = genai.Client(
 )
 
 
-EVALUATION_PROMPT = """
-You are evaluating a user's performance in a Socratic debate training session.
+from app.services.rubrics import get_categories, get_mode_label
+
+
+def build_evaluation_prompt(mode: str) -> str:
+    categories = get_categories(mode)
+    label = get_mode_label(mode)
+
+    category_blocks = ",\n".join(
+        f'''    {{
+      "category": "{cat}",
+      "score": 0,
+      "strength": "one observed strength",
+      "weakness": "one observed weakness",
+      "evidence": "specific evidence from the conversation"
+    }}'''
+        for cat in categories
+    )
+
+    return f"""
+You are evaluating a user's performance in {label}.
 
 Evaluate the user's performance based ONLY on the conversation provided.
 
 Return ONLY valid JSON with this exact structure:
 
-{
+{{
   "overall_score": 0,
   "summary": "short summary of the user's performance",
   "scores": [
-    {
-      "category": "critical_thinking",
-      "score": 0,
-      "strength": "one observed strength",
-      "weakness": "one observed weakness",
-      "evidence": "specific evidence from the conversation"
-    },
-    {
-      "category": "argumentation",
-      "score": 0,
-      "strength": "one observed strength",
-      "weakness": "one observed weakness",
-      "evidence": "specific evidence from the conversation"
-    },
-    {
-      "category": "clarity",
-      "score": 0,
-      "strength": "one observed strength",
-      "weakness": "one observed weakness",
-      "evidence": "specific evidence from the conversation"
-    },
-    {
-      "category": "reasoning",
-      "score": 0,
-      "strength": "one observed strength",
-      "weakness": "one observed weakness",
-      "evidence": "specific evidence from the conversation"
-    }
+{category_blocks}
   ],
   "recommended_practice": []
-}
+}}
 
 Scores must be between 0 and 100.
 
 Do not invent facts about the user.
 Do not evaluate the AI's performance.
-Evaluate only the user's reasoning, argumentation, clarity, critical thinking, and related skills.
+Evaluate only the user's demonstrated skills relevant to {label}.
 """
 
 
@@ -97,10 +88,12 @@ def evaluate_session(session_id: str, user_id: str):
     )
 
     # 4. Ask Gemini to evaluate the session
+    evaluation_prompt = build_evaluation_prompt(session["mode"])
+
     interaction = gemini_client.interactions.create(
         model="gemini-3.6-flash",
         input=(
-            f"{EVALUATION_PROMPT}\n\n"
+            f"{evaluation_prompt}\n\n"
             f"Topic: {session['topic']}\n\n"
             f"Conversation:\n{conversation}"
         )

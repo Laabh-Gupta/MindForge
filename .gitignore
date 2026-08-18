@@ -4,9 +4,11 @@ backend\.env
 MindForge-BuildPlan-2.md
 Prompt.txt
 mindforge-master-plan.md
-Prompt2.txt
+step 15.txt
 MindForge_Steps_1_to_12_Continuation.md
 For-Prompt/*
+Prompt3.txt
+
 
 # Environment variables
 .env
