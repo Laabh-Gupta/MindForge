@@ -8,6 +8,9 @@ import Debate from './Debate'
 import Interview from './Interview'
 import Account from './Account'
 
+const { data } = await supabase.auth.getSession()
+console.log(data.session?.access_token)
+
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [checked, setChecked] = useState(false)

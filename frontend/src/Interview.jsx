@@ -8,6 +8,8 @@ export default function Interview({ onExit }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [role, setRole] = useState('')
+  const [resumeText, setResumeText] = useState('')
+  const [jdText, setJdText] = useState('')
   const [loading, setLoading] = useState(false)
   const [starting, setStarting] = useState(false)
   const [concluded, setConcluded] = useState(false)
@@ -23,24 +25,36 @@ export default function Interview({ onExit }) {
   }, [messages, loading])
 
   async function startSession() {
-    if (!role.trim()) return
+  if (!role.trim()) return
 
-    setStarting(true)
+  setStarting(true)
 
-    try {
-      const session = await createSession('interview', role)
+  try {
+    const session = await createSession('interview', role, {
+      resume_text: resumeText,
+      jd_text: jdText,
+    })
 
-      if (session && session.id) {
-        setSessionId(session.id)
-      } else {
-        console.error('Unexpected session response:', session)
+    if (session && session.id) {
+      setSessionId(session.id)
+
+      if (session.opening_message) {
+        setMessages([
+          {
+            role: 'ai',
+            content: session.opening_message,
+          },
+        ])
       }
-    } catch (err) {
-      console.error('createSession failed:', err)
-    } finally {
-      setStarting(false)
+    } else {
+      console.error('Unexpected session response:', session)
     }
+  } catch (err) {
+    console.error('createSession failed:', err)
+  } finally {
+    setStarting(false)
   }
+}
 
   async function handleSend() {
     if (!sessionId || !input.trim() || loading) return
@@ -109,6 +123,8 @@ export default function Interview({ onExit }) {
     setSessionId(null)
     setMessages([])
     setRole('')
+    setResumeText('')
+    setJdText('')
     setConcluded(false)
     setEvaluation(null)
     setScores([])
@@ -149,6 +165,20 @@ export default function Interview({ onExit }) {
             placeholder="e.g. MBA Interview, HR Interview, Product Manager"
             value={role}
             onChange={e => setRole(e.target.value)}
+          />
+
+          <textarea
+            className="bg-bg-card border border-border rounded-xl px-4 py-3 font-body text-[15px] text-text placeholder:text-text-muted focus:outline-none focus:border-accent-dim transition-colors resize-y min-h-32"
+            placeholder="Resume (optional)"
+            value={resumeText}
+            onChange={e => setResumeText(e.target.value)}
+          />
+
+          <textarea
+            className="bg-bg-card border border-border rounded-xl px-4 py-3 font-body text-[15px] text-text placeholder:text-text-muted focus:outline-none focus:border-accent-dim transition-colors resize-y min-h-32"
+            placeholder="Job Description (optional)"
+            value={jdText}
+            onChange={e => setJdText(e.target.value)}
           />
 
           <button

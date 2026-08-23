@@ -40,6 +40,14 @@ user's actual topic. Never add extra sections beyond these three."""
 INTERVIEW_SYSTEM_PROMPT = """You are conducting a professional interview. Your job is to
 genuinely assess the candidate's thinking, not run through a script.
 
+At the beginning of a new interview, before the candidate has given any answer,
+you must start the conversation yourself. Briefly welcome the candidate and ask
+them to introduce themselves, including their background and experience relevant
+to the role. Do not wait for the candidate to initiate the conversation.
+
+After the candidate has given their introduction, continue the interview naturally
+based on what they actually say.
+
 For every candidate answer:
 1. Understand what they actually said — their reasoning, not just the topic.
 2. Identify anything vague, inconsistent, or under-explained.
@@ -61,15 +69,49 @@ def get_system_prompt(mode: str) -> str:
         return INTERVIEW_SYSTEM_PROMPT
     return DEBATE_SYSTEM_PROMPT
 
+def get_candidate_context(session_id: str) -> str:
+    docs = (
+        supabase
+        .table("documents")
+        .select("type, content_text")
+        .eq("session_id", session_id)
+        .execute()
+        .data
+    )
+
+    if not docs:
+        return ""
+
+    lines = ["CANDIDATE CONTEXT"]
+
+    for doc in docs:
+        if doc["type"] == "resume":
+            lines.append(f"Resume:\n{doc['content_text']}")
+        elif doc["type"] == "jd":
+            lines.append(f"Job Description:\n{doc['content_text']}")
+
+    lines.append(
+        "\nUse specific details from the resume and/or job description above to ground "
+        "your questions — reference actual experience, projects, or requirements rather "
+        "than asking generically."
+    )
+
+    return "\n\n".join(lines)
+
 class CreateSessionRequest(BaseModel):
     mode: str
     topic: str
+    resume_text: str | None = None
+    jd_text: str | None = None
 
 class MessageRequest(BaseModel):
     content: str
 
 @router.post("/sessions")
-def create_session(req: CreateSessionRequest, user_id: str = Depends(get_current_user)):
+def create_session(
+    req: CreateSessionRequest,
+    user_id: str = Depends(get_current_user)
+):
     result = supabase.table("sessions").insert({
         "user_id": user_id,
         "mode": req.mode,
@@ -77,7 +119,79 @@ def create_session(req: CreateSessionRequest, user_id: str = Depends(get_current
         "config": {},
         "status": "active"
     }).execute()
-    return result.data[0]
+
+    session = result.data[0]
+
+    if req.mode == "interview":
+        docs = []
+
+        if req.resume_text and req.resume_text.strip():
+            docs.append({
+                "user_id": user_id,
+                "session_id": session["id"],
+                "type": "resume",
+                "content_text": req.resume_text.strip()
+            })
+
+        if req.jd_text and req.jd_text.strip():
+            docs.append({
+                "user_id": user_id,
+                "session_id": session["id"],
+                "type": "jd",
+                "content_text": req.jd_text.strip()
+            })
+
+        if docs:
+            supabase.table("documents").insert(docs).execute()
+
+        # Generate the opening message.
+        # This does NOT increment turn_count.
+        training_context = get_training_context(user_id)
+        candidate_context = get_candidate_context(session["id"])
+
+        opening_instruction = (
+            "\n\nThis is the very start of the interview. Begin by briefly welcoming "
+            "the candidate and asking them to introduce themselves and their background "
+            "relevant to this role. Do not ask any other question yet — just the opening "
+            "welcome and introduction request."
+        )
+
+        full_prompt = f"{INTERVIEW_SYSTEM_PROMPT}{opening_instruction}"
+
+        if training_context:
+            full_prompt = f"{training_context}\n\n{full_prompt}"
+
+        if candidate_context:
+            full_prompt = f"{full_prompt}\n\n{candidate_context}"
+
+        opening_response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"{full_prompt}\n\n"
+                        f"Topic: {req.topic}"
+                    )
+                }
+            ],
+            temperature=0.7,
+        )
+
+        opening_message = opening_response.choices[0].message.content
+
+        # Save opening message as AI message.
+        # No user message is created.
+        supabase.table("messages").insert({
+            "session_id": session["id"],
+            "role": "ai",
+            "content": opening_message
+        }).execute()
+
+        # Return it to the frontend so it can display immediately.
+        session["opening_message"] = opening_message
+
+    return session
 
 @router.post("/sessions/{session_id}/messages")
 def send_message(
@@ -126,6 +240,11 @@ def send_message(
         if training_context
         else mode_prompt
     )
+    if session["mode"] == "interview":
+        candidate_context = get_candidate_context(session_id)
+
+        if candidate_context:
+            full_prompt = f"{full_prompt}\n\n{candidate_context}"
 
     # 5. Save user's message
     supabase.table("messages").insert({

@@ -7,12 +7,20 @@ async function authHeader() {
   return { Authorization: `Bearer ${data.session?.access_token}` }
 }
 
-export async function createSession(mode, topic) {
+export async function createSession(mode, topic, options = {}) {
   const res = await fetch(`${API_BASE}/sessions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ mode, topic }),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(await authHeader()),
+    },
+    body: JSON.stringify({
+      mode,
+      topic,
+      ...options,
+    }),
   })
+
   return res.json()
 }
 
